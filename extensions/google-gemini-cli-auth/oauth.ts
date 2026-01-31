@@ -64,13 +64,54 @@ export function extractGeminiCliCredentials(): { clientId: string; clientSecret:
   }
 
   try {
+    // Handle Windows specific installation paths
+    if (process.platform === "win32") {
+      // Default npm global install path for @google/gemini-cli
+      const npmGlobalPath = join(process.env.APPDATA || "", "npm", "node_modules", "@google", "gemini-cli");
+      if (existsSync(npmGlobalPath)) {
+        const searchPaths = [
+          join(npmGlobalPath, "node_modules", "@google", "gemini-cli-core", "dist", "src", "code_assist", "oauth2.js"),
+        ];
+
+        let content: string | null = null;
+        for (const p of searchPaths) {
+          if (existsSync(p)) {
+            content = readFileSync(p, "utf8");
+            break;
+          }
+        }
+        if (!content) {
+          const found = findFile(npmGlobalPath, "oauth2.js", 10);
+          if (found) {
+            content = readFileSync(found, "utf8");
+          }
+        }
+        if (!content) {
+          return null;
+        }
+
+        const idMatch = content.match(/(\d+-[a-z0-9]+\.apps\.googleusercontent\.com)/);
+        const secretMatch = content.match(/(GOCSPX-[A-Za-z0-9_-]+)/);
+        if (idMatch && secretMatch) {
+          cachedGeminiCliCredentials = { clientId: idMatch[1], clientSecret: secretMatch[1] };
+          return cachedGeminiCliCredentials;
+        }
+      }
+    }
+
+    // Original behavior for other platforms or if Windows specific path fails
     const geminiPath = findInPath("gemini");
     if (!geminiPath) {
       return null;
     }
 
     const resolvedPath = realpathSync(geminiPath);
-    const geminiCliDir = dirname(dirname(resolvedPath));
+    // Handle case where we find a .ps1 or .cmd file on Windows
+    let geminiCliDir = dirname(dirname(resolvedPath));
+    if (resolvedPath.endsWith(".ps1") || resolvedPath.endsWith(".cmd")) {
+      // On Windows, npm installs scripts in APPDATA\npm and actual packages in APPDATA\npm\node_modules
+      geminiCliDir = join(process.env.APPDATA || "", "npm", "node_modules", "@google", "gemini-cli");
+    }
 
     const searchPaths = [
       join(
@@ -80,15 +121,6 @@ export function extractGeminiCliCredentials(): { clientId: string; clientSecret:
         "gemini-cli-core",
         "dist",
         "src",
-        "code_assist",
-        "oauth2.js",
-      ),
-      join(
-        geminiCliDir,
-        "node_modules",
-        "@google",
-        "gemini-cli-core",
-        "dist",
         "code_assist",
         "oauth2.js",
       ),
@@ -153,7 +185,7 @@ function findFile(dir: string, name: string, depth: number): string | null {
         }
       }
     }
-  } catch {}
+  } catch { }
   return null;
 }
 
@@ -308,8 +340,8 @@ async function waitForLocalCallback(params: {
         res.setHeader("Content-Type", "text/html; charset=utf-8");
         res.end(
           "<!doctype html><html><head><meta charset='utf-8'/></head>" +
-            "<body><h2>Gemini CLI OAuth complete</h2>" +
-            "<p>You can close this window and return to OpenClaw.</p></body></html>",
+          "<body><h2>Gemini CLI OAuth complete</h2>" +
+          "<p>You can close this window and return to OpenClaw.</p></body></html>",
         );
 
         finish(undefined, { code, state });
@@ -591,15 +623,15 @@ export async function loginGeminiCliOAuth(
   await ctx.note(
     needsManual
       ? [
-          "You are running in a remote/VPS environment.",
-          "A URL will be shown for you to open in your LOCAL browser.",
-          "After signing in, copy the redirect URL and paste it back here.",
-        ].join("\n")
+        "You are running in a remote/VPS environment.",
+        "A URL will be shown for you to open in your LOCAL browser.",
+        "After signing in, copy the redirect URL and paste it back here.",
+      ].join("\n")
       : [
-          "Browser will open for Google authentication.",
-          "Sign in with your Google account for Gemini CLI access.",
-          "The callback will be captured automatically on localhost:8085.",
-        ].join("\n"),
+        "Browser will open for Google authentication.",
+        "Sign in with your Google account for Gemini CLI access.",
+        "The callback will be captured automatically on localhost:8085.",
+      ].join("\n"),
     "Gemini CLI OAuth",
   );
 
